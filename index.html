@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video to Audio Converter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.10/ffmpeg.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#6366f1',
+                        secondary: '#8b5cf6',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .glass-effect {
+            backdrop-filter: blur(16px);
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .file-drop-zone {
+            transition: all 0.3s ease;
+        }
+        .file-drop-zone.drag-over {
+            transform: scale(1.02);
+            border-color: #6366f1;
+            background-color: rgba(99, 102, 241, 0.1);
+        }
+        .progress-bar {
+            transition: width 0.3s ease;
+        }
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .pulse-animation {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="min-h-screen gradient-bg">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="text-center mb-12">
+            <h1 class="text-4xl md:text-6xl font-bold text-white mb-4">
+                🎵 Video to Audio Converter
+            </h1>
+            <p class="text-xl text-white/80 max-w-2xl mx-auto">
+                Convert your MP4 and MP5 videos to high-quality MP3 audio files with ease. 
+                Drag, drop, and convert in seconds!
+            </p>
+        </div>
+
+        <!-- Main Converter Card -->
+        <div class="max-w-4xl mx-auto glass-effect rounded-2xl p-8 mb-8">
+            <!-- File Upload Zone -->
+            <div id="uploadZone" class="file-drop-zone border-3 border-dashed border-white/30 rounded-xl p-12 text-center mb-8 cursor-pointer hover:border-white/50 transition-all">
+                <div id="uploadContent">
+                    <div class="text-6xl mb-4">📁</div>
+                    <h3 class="text-2xl font-semibold text-white mb-2">Drop your video files here</h3>
+                    <p class="text-white/70 mb-4">or click to browse files</p>
+                    <p class="text-sm text-white/50">Supports MP4 and MP5 files (Max 100MB each)</p>
+                </div>
+                <input type="file" id="fileInput" multiple accept=".mp4,.mp5" class="hidden">
+            </div>
+
+            <!-- File Queue -->
+            <div id="fileQueue" class="space-y-4 mb-8 hidden">
+                <h3 class="text-xl font-semibold text-white mb-4">📋 Conversion Queue</h3>
+                <div id="fileList"></div>
+            </div>
+
+            <!-- Batch Controls -->
+            <div id="batchControls" class="flex flex-wrap gap-4 justify-center mb-8 hidden">
+                <button id="convertAllBtn" class="bg-green-500 hover:bg-green-600 text-white px-8 py-3 rounded-lg font-semibold transition-colors">
+                    🚀 Convert All Files
+                </button>
+                <button id="clearAllBtn" class="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg font-semibold transition-colors">
+                    🗑️ Clear All
+                </button>
+            </div>
+
+            <!-- Global Progress -->
+            <div id="globalProgress" class="hidden mb-8">
+                <div class="flex justify-between text-white mb-2">
+                    <span>Overall Progress</span>
+                    <span id="globalProgressText">0%</span>
+                </div>
+                <div class="w-full bg-white/20 rounded-full h-3">
+                    <div id="globalProgressBar" class="progress-bar bg-gradient-to-r from-green-400 to-blue-500 h-3 rounded-full" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Completed Downloads -->
+        <div id="completedSection" class="max-w-4xl mx-auto glass-effect rounded-2xl p-8 hidden">
+            <h3 class="text-2xl font-semibold text-white mb-6">✅ Completed Conversions</h3>
+            <div id="completedList" class="space-y-4"></div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center mt-12 text-white/60">
+            <p>⚡ Powered by FFmpeg.js • 🔒 All processing happens in your browser</p>
+        </div>
+    </div>
+
+    <script>
+        class VideoToAudioConverter {
+            constructor() {
+                this.ffmpeg = null;
+                this.isLoaded = false;
+                this.fileQueue = new Map();
+                this.completedFiles = [];
+                this.currentlyProcessing = false;
+                
+                this.initializeElements();
+                this.setupEventListeners();
+                this.loadFFmpeg();
+            }
+
+            initializeElements() {
+                this.uploadZone = document.getElementById('uploadZone');
+                this.fileInput = document.getElementById('fileInput');
+                this.fileQueue = document.getElementById('fileQueue');
+                this.fileList = document.getElementById('fileList');
+                this.batchControls = document.getElementById('batchControls');
+                this.convertAllBtn = document.getElementById('convertAllBtn');
+                this.clearAllBtn = document.getElementById('clearAllBtn');
+                this.globalProgress = document.getElementById('globalProgress');
+                this.globalProgressBar = document.getElementById('globalProgressBar');
+                this.globalProgressText = document.getElementById('globalProgressText');
+                this.completedSection = document.getElementById('completedSection');
+                this.completedList = document.getElementById('completedList');
+            }
+
+            setupEventListeners() {
+                // Upload zone events
+                this.uploadZone.addEventListener('click', () => this.fileInput.click());
+                this.uploadZone.addEventListener('dragover', this.handleDragOver.bind(this));
+                this.uploadZone.addEventListener('dragleave', this.handleDragLeave.bind(this));
+                this.uploadZone.addEventListener('drop', this.handleDrop.bind(this));
+                
+                // File input
+                this.fileInput.addEventListener('change', (e) => this.handleFiles(e.target.files));
+                
+                // Batch controls
+                this.convertAllBtn.addEventListener('click', this.convertAllFiles.bind(this));
+                this.clearAllBtn.addEventListener('click', this.clearAllFiles.bind(this));
+            }
+
+            async loadFFmpeg() {
+                try {
+                    const { createFFmpeg, fetchFile } = FFmpeg;
+                    this.ffmpeg = createFFmpeg({
+                        log: true,
+                        corePath: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js',
+                    });
+                    
+                    this.updateUploadZone('🔄 Loading FFmpeg...', 'Please wait while we prepare the converter');
+                    
+                    await this.ffmpeg.load();
+                    this.isLoaded = true;
+                    this.fetchFile = fetchFile;
+                    
+                    this.updateUploadZone('📁 Drop your video files here', 'or click to browse files');
+                } catch (error) {
+                    console.error('Failed to load FFmpeg:', error);
+                    this.updateUploadZone('❌ Failed to load converter', 'Please refresh the page to try again');
+                }
+            }
+
+            updateUploadZone(title, subtitle) {
+                const content = document.getElementById('uploadContent');
+                content.innerHTML = `
+                    <div class="text-6xl mb-4">${title.includes('🔄') ? '🔄' : title.includes('❌') ? '❌' : '📁'}</div>
+                    <h3 class="text-2xl font-semibold text-white mb-2">${title}</h3>
+                    <p class="text-white/70 mb-4">${subtitle}</p>
+                    ${!title.includes('❌') && !title.includes('🔄') ? '<p class="text-sm text-white/50">Supports MP4 and MP5 files (Max 100MB each)</p>' : ''}
+                `;
+                
+                if (title.includes('🔄')) {
+                    content.classList.add('pulse-animation');
+                } else {
+                    content.classList.remove('pulse-animation');
+                }
+            }
+
+            handleDragOver(e) {
+                e.preventDefault();
+                this.uploadZone.classList.add('drag-over');
+            }
+
+            handleDragLeave(e) {
+                e.preventDefault();
+                this.uploadZone.classList.remove('drag-over');
+            }
+
+            handleDrop(e) {
+                e.preventDefault();
+                this.uploadZone.classList.remove('drag-over');
+                this.handleFiles(e.dataTransfer.files);
+            }
+
+            handleFiles(files) {
+                if (!this.isLoaded) {
+                    alert('⏳ Please wait for the converter to load completely');
+                    return;
+                }
+
+                Array.from(files).forEach(file => {
+                    if (this.validateFile(file)) {
+                        this.addFileToQueue(file);
+                    }
+                });
+
+                this.updateUI();
+            }
+
+            validateFile(file) {
+                const maxSize = 100 * 1024 * 1024; // 100MB
+                const allowedTypes = ['video/mp4', 'video/mp5'];
+                
+                if (file.size > maxSize) {
+                    alert(`❌ File "${file.name}" is too large. Maximum size is 100MB.`);
+                    return false;
+                }
+                
+                if (!allowedTypes.includes(file.type) && !file.name.toLowerCase().match(/\.(mp4|mp5)$/)) {
+                    alert(`❌ File "${file.name}" is not supported. Please use MP4 or MP5 files.`);
+                    return false;
+                }
+                
+                return true;
+            }
+
+            addFileToQueue(file) {
+                const fileId = Date.now() + Math.random();
+                const fileData = {
+                    id: fileId,
+                    file: file,
+                    name: file.name,
+                    size: this.formatFileSize(file.size),
+                    status: 'pending',
+                    progress: 0,
+                    startTime: null,
+                    endTime: null,
+                    trimStart: 0,
+                    trimEnd: null
+                };
+                
+                this.fileQueue.set(fileId, fileData);
+            }
+
+            updateUI() {
+                if (this.fileQueue.size === 0) {
+                    this.fileQueue.classList.add('hidden');
+                    this.batchControls.classList.add('hidden');
+                    return;
+                }
+
+                this.fileQueue.classList.remove('hidden');
+                this.batchControls.classList.remove('hidden');
+                
+                this.renderFileList();
+            }
+
+            renderFileList() {
+                this.fileList.innerHTML = '';
+                
+                this.fileQueue.forEach((fileData, fileId) => {
+                    const fileElement = this.createFileElement(fileData);
+                    this.fileList.appendChild(fileElement);
+                });
+            }
+
+            createFileElement(fileData) {
+                const div = document.createElement('div');
+                div.className = 'glass-effect rounded-lg p-6 fade-in';
+                
+                div.innerHTML = `
+                    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div class="flex-1">
+                            <h4 class="text-white font-semibold mb-1">${fileData.name}</h4>
+                            <p class="text-white/60 text-sm">Size: ${fileData.size}</p>
+                            <div class="flex items-center gap-2 mt-2">
+                                <span class="px-2 py-1 rounded text-xs ${this.getStatusColor(fileData.status)}">
+                                    ${this.getStatusIcon(fileData.status)} ${fileData.status.toUpperCase()}
+                                </span>
+                            </div>
+                        </div>
+                        
+                        <div class="flex flex-col sm:flex-row gap-2">
+                            <button onclick="converter.convertSingleFile('${fileData.id}')" 
+                                    class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm font-semibold transition-colors"
+                                    ${fileData.status === 'converting' ? 'disabled' : ''}>
+                                🎵 Convert
+                            </button>
+                            <button onclick="converter.removeFile('${fileData.id}')" 
+                                    class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded text-sm font-semibold transition-colors"
+                                    ${fileData.status === 'converting' ? 'disabled' : ''}>
+                                🗑️ Remove
+                            </button>
+                        </div>
+                    </div>
+                    
+                    ${fileData.status === 'converting' ? `
+                        <div class="mt-4">
+                            <div class="flex justify-between text-white/80 text-sm mb-2">
+                                <span>Converting...</span>
+                                <span>${fileData.progress}%</span>
+                            </div>
+                            <div class="w-full bg-white/20 rounded-full h-2">
+                                <div class="progress-bar bg-gradient-to-r from-blue-400 to-purple-500 h-2 rounded-full" 
+                                     style="width: ${fileData.progress}%"></div>
+                            </div>
+                        </div>
+                    ` : ''}
+                `;
+                
+                return div;
+            }
+
+            getStatusColor(status) {
+                const colors = {
+                    pending: 'bg-yellow-500/20 text-yellow-300',
+                    converting: 'bg-blue-500/20 text-blue-300',
+                    completed: 'bg-green-500/20 text-green-300',
+                    error: 'bg-red-500/20 text-red-300'
+                };
+                return colors[status] || colors.pending;
+            }
+
+            getStatusIcon(status) {
+                const icons = {
+                    pending: '⏳',
+                    converting: '🔄',
+                    completed: '✅',
+                    error: '❌'
+                };
+                return icons[status] || icons.pending;
+            }
+
+            async convertSingleFile(fileId) {
+                const fileData = this.fileQueue.get(fileId);
+                if (!fileData || this.currentlyProcessing) return;
+
+                try {
+                    this.currentlyProcessing = true;
+                    fileData.status = 'converting';
+                    this.updateUI();
+
+                    // Write file to FFmpeg filesystem
+                    const inputName = `input.${fileData.file.name.split('.').pop()}`;
+                    const outputName = `output.mp3`;
+                    
+                    await this.ffmpeg.FS('writeFile', inputName, await this.fetchFile(fileData.file));
+
+                    // Set up progress tracking
+                    this.ffmpeg.setProgress(({ ratio }) => {
+                        fileData.progress = Math.round(ratio * 100);
+                        this.updateUI();
+                    });
+
+                    // Convert to MP3
+                    await this.ffmpeg.run(
+                        '-i', inputName,
+                        '-codec:a', 'libmp3lame',
+                        '-b:a', '192k',
+                        '-ar', '44100',
+                        outputName
+                    );
+
+                    // Get the converted file
+                    const data = this.ffmpeg.FS('readFile', outputName);
+                    const blob = new Blob([data.buffer], { type: 'audio/mpeg' });
+                    
+                    // Create download URL
+                    const url = URL.createObjectURL(blob);
+                    const originalName = fileData.name.replace(/\.[^/.]+$/, '');
+                    
+                    // Move to completed list
+                    const completedFile = {
+                        ...fileData,
+                        status: 'completed',
+                        downloadUrl: url,
+                        outputName: `${originalName}.mp3`,
+                        blob: blob
+                    };
+                    
+                    this.completedFiles.push(completedFile);
+                    this.fileQueue.delete(fileId);
+                    
+                    // Cleanup FFmpeg filesystem
+                    this.ffmpeg.FS('unlink', inputName);
+                    this.ffmpeg.FS('unlink', outputName);
+                    
+                    this.updateUI();
+                    this.updateCompletedList();
+                    
+                } catch (error) {
+                    console.error('Conversion error:', error);
+                    fileData.status = 'error';
+                    this.updateUI();
+                } finally {
+                    this.currentlyProcessing = false;
+                }
+            }
+
+            async convertAllFiles() {
+                if (this.currentlyProcessing) return;
+                
+                const pendingFiles = Array.from(this.fileQueue.values()).filter(f => f.status === 'pending');
+                if (pendingFiles.length === 0) return;
+
+                this.globalProgress.classList.remove('hidden');
+                
+                for (let i = 0; i < pendingFiles.length; i++) {
+                    await this.convertSingleFile(pendingFiles[i].id);
+                    
+                    const progress = Math.round(((i + 1) / pendingFiles.length) * 100);
+                    this.globalProgressBar.style.width = `${progress}%`;
+                    this.globalProgressText.textContent = `${progress}%`;
+                }
+                
+                setTimeout(() => {
+                    this.globalProgress.classList.add('hidden');
+                }, 2000);
+            }
+
+            updateCompletedList() {
+                if (this.completedFiles.length === 0) {
+                    this.completedSection.classList.add('hidden');
+                    return;
+                }
+
+                this.completedSection.classList.remove('hidden');
+                this.completedList.innerHTML = '';
+
+                this.completedFiles.forEach((file, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'glass-effect rounded-lg p-6 fade-in';
+                    
+                    div.innerHTML = `
+                        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div class="flex-1">
+                                <h4 class="text-white font-semibold mb-1">🎵 ${file.outputName}</h4>
+                                <p class="text-white/60 text-sm">Converted from: ${file.name}</p>
+                                <p class="text-white/60 text-sm">Size: ${file.size}</p>
+                            </div>
+                            
+                            <div class="flex flex-col sm:flex-row gap-2">
+                                <audio controls class="mb-2 sm:mb-0">
+                                    <source src="${file.downloadUrl}" type="audio/mpeg">
+                                    Your browser does not support the audio element.
+                                </audio>
+                                <button onclick="converter.downloadFile('${file.downloadUrl}', '${file.outputName}')" 
+                                        class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded text-sm font-semibold transition-colors">
+                                    💾 Download
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    
+                    this.completedList.appendChild(div);
+                });
+            }
+
+            downloadFile(url, filename) {
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+
+            removeFile(fileId) {
+                this.fileQueue.delete(fileId);
+                this.updateUI();
+            }
+
+            clearAllFiles() {
+                this.fileQueue.clear();
+                this.updateUI();
+            }
+
+            formatFileSize(bytes) {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+        }
+
+        // Initialize the converter when the page loads
+        let converter;
+        window.addEventListener('load', () => {
+            converter = new VideoToAudioConverter();
+        });
+    </script>
+</body>
+</html>
